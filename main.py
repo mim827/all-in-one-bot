@@ -1,54 +1,73 @@
-import os, asyncio
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
+import os, threading, asyncio
+from flask import Flask
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, MessageHandler, filters, ContextTypes
 
+app = Flask(__name__)
 TOKEN = os.environ.get("BOT_TOKEN")
-CHANNEL = "@virallink72882"
 
-async def is_joined(user_id, context):
-    try:
-        m = await context.bot.get_chat_member(CHANNEL, user_id)
-        return m.status in ["member", "administrator", "creator"]
-    except:
-        return False
+CHANNELS = ["@virallink72882"]
+LINKS = ["https://t.me/virallink72882"]
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+@app.route('/')
+def home():
+    return "Bot is Live! 24H"
+
+async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or update.message.from_user.is_bot:
+        return
+    
+    uid = update.effective_user.id
     user = update.effective_user
-    if await is_joined(user.id, context):
-        await update.message.reply_text(f"👋 হ্যালো {user.first_name}!\n\n✅ তুমি চ্যানেলে Join আছো। এখন বট ব্যবহার করতে পারবা।")
-    else:
-        await update.message.reply_text(f"⚠️ প্রথমে আমাদের চ্যানেলে Join করো!\n\n👉 https://t.me/virallink72882\n\nJoin করে আবার /start দাও।")
+    username = f"@{user.username}" if user.username else user.first_name
 
-async def delete_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.message
-    if not msg or not msg.text: return
-    if msg.chat.type == "private": return
-
-    # Admin দের লিংক ডিলিট হবে না
     try:
-        member = await context.bot.get_chat_member(msg.chat.id, msg.from_user.id)
-        if member.status in ["administrator", "creator"]:
+        m = await context.bot.get_chat_member(update.effective_chat.id, uid)
+        if m.status in ['administrator', 'creator']:
             return
-    except: pass
+    except:
+        pass
 
-    text = msg.text.lower()
-    if any(x in text for x in ["http://", "https://", "t.me/", "telegram.me/", "www.", ".com", ".xyz", ".top", ".in"]):
+    try:
+        for ch in CHANNELS:
+            cm = await context.bot.get_chat_member(ch, uid)
+            if cm.status not in ['member', 'administrator', 'creator']:
+                raise Exception("not joined")
+    except:
+        text = f"মেসেজ করার আগে, {username} 😳 আপনাকে আমাদের চ্যানেলে জয়েন করতে হবে। (সতর্কবার্তা: 1/10)"
+        buttons = [[InlineKeyboardButton("📢 চ্যানেলে জয়েন করুন / Join Channel", url=LINKS[0])]]
+        
         try:
-            await msg.delete()
-            w = await context.bot.send_message(msg.chat.id, f"⚠️ @{msg.from_user.username or msg.from_user.first_name}, গ্রুপে লিংক দেওয়া নিষেধ!")
-            await asyncio.sleep(5)
-            await w.delete()
-        except: pass
+            await update.message.delete()
+        except:
+            pass
+            
+        sent = await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=text,
+            reply_markup=InlineKeyboardMarkup(buttons)
+        )
+        
+        # ১৫ সেকেন্ড পর অটো ডিলিট
+        await asyncio.sleep(15)
+        try:
+            await sent.delete()
+        except:
+            pass
+        return
 
-if __name__ == "__main__":
-    from flask import Flask
-    import threading
-    app = Flask(__name__)
-    @app.route('/')
-    def home(): return "Bot is Live!"
-    threading.Thread(target=lambda: app.run(host="0.0.0.0", port=10000)).start()
+def run_flask():
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
 
-    app_bot = ApplicationBuilder().token(TOKEN).build()
-    app_bot.add_handler(CommandHandler("start", start))
-    app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, delete_link))
-    app_bot.run_polling()
+async def main_bot():
+    application = Application.builder().token(TOKEN).build()
+    application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, check))
+    await application.initialize()
+    await application.start()
+    await application.updater.start_polling()
+    print("Bot Started - 24H + 15s Auto Delete")
+    await asyncio.Event().wait()
+
+if __name__ == '__main__':
+    threading.Thread(target=run_flask).start()
+    asyncio.run(main_bot())
